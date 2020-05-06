@@ -1,0 +1,56 @@
+# Variables
+subscriptionId="[customer subscription Id]"
+rgName="customer-env"
+locationName="centralus"
+vnetName="customer-env"
+vnetAddressPrefix="10.0.0.0/16"
+subnetName="subnet1"
+subnetPrefix="10.0.0.0/24"
+vmName="ubuntu-cust"
+vmSize="Standard_B1ms"
+pleName="ple2"
+pleConnectionName="pleconn2"
+
+# Set default subscription
+az login
+az account set --subscription $subscriptionId
+
+# Build Resource Group
+az group create --name $rgName --location $locationName
+
+# Build Virtual Network
+az network vnet create --name $vnetName --resource-group $rgName --location $locationName --address-prefixes $vnetAddressPrefix --subnet-name $subnetName --subnet-prefixes $subnetPrefix
+
+# Modify subnet in preparation for Private Link Endpoint
+az network vnet subnet update --resource-group $rgName --vnet-name $vnetName --name $subnetName --disable-private-endpoint-network-policies true 
+
+# Build Ubuntu VM
+az vm create --name $vmName --resource-group $rgName --image UbuntuLTS --size $vmSize --vnet-name $vnetName --subnet $subnetName --generate-ssh-keys --
+vmPublicIp=$(az vm show -d --name $vmName --resource-group $rgName --query publicIps -o tsv)
+
+# Retrieve Private Link Alias from SaaS Provider
+plsAlias="[Private Link Service Alias from SaaS Provider]"
+
+# Create Private Endpoint to SaaS service
+az network private-endpoint create --resource-group $rgName --name $pleName --vnet-name $vnetName --subnet $subnetName --private-connection-resource-id $plsAlias --connection-name $pleConnectionName --location $locationName --manual-request true
+
+# Get local Private Endpoint IP
+pleNicId=$(az network private-endpoint show --name $pleName --resource-group $rgName --query networkInterfaces[0].id -o tsv)
+pleNicIp=$(az network nic show --ids $pleNicId --query ipConfigurations[0].privateIpAddress -o tsv)
+
+# Operations
+    # get public IP
+    vmPublicIp=$(az vm show -d --name $vmName --resource-group $rgName --query publicIps -o tsv)
+    
+    # ssh
+    ssh $vmPublicIp
+    
+    # curl
+    ssh $vmPublicIp "curl -L0 --header 'X-MyHeader: Customer 1' $pleNicIp"
+
+
+    # deallocate and start vm
+    az vm deallocate --name $vmName --resource-group $rgName
+    az vm start --name $vmName --resource-group $rgName
+
+    

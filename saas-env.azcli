@@ -1,0 +1,120 @@
+# Variables
+read -p "Enter SaaS Subscription ID: " subscriptionId
+echo
+echo "Subscription ID Entered: $subscriptionId"
+rgName="saas-env"
+locationName="centralus"
+vnetName=$rgName
+vnetAddressPrefix="10.0.0.0/16"
+subnet1Name="subnet1"
+subnet1Prefix="10.0.0.0/24"
+subnet2Name="subnet2"
+subnet2Prefix="10.0.1.0/24"
+vmName="nodejs1"
+vmSize="Standard_B1ms"
+vmNicName=$vmName"nic"
+vmPublicIPName=$vmName"publicip"
+nsgName="nsg1"
+nsgRuleDirection="inbound"
+nsgRuleName="sshinbound"
+nsgRuleProtocol="tcp"
+nsgRuleDestinationPorts="22"
+nsgRuleAccess="allow"
+nsgRulePriority="200"
+lbName="ilb1"
+lbBackEndPoolName="backendpool1"
+lbFrontEndIpName="frontendipname"
+lbHealthProbeName="healthprobe1"
+lbHealthProbeProtocol="tcp"
+lbHealthProbePort="80"
+lbRuleName="httprule1"
+lbRuleProtocol="tcp"
+lbRuleFrontEndPort="80"
+lbRuleBackEndPort="80"
+plsName="pls1"
+customerSubcriptionIds="82407e9e-4bfb-4a86-95d6-43b561a9ee29"
+
+# Set default subscription
+az login
+az account set --subscription $subscriptionId
+
+# Build Resource Group
+az group create --name $rgName --location $locationName
+
+# Build Virtual Network
+az network vnet create --name $vnetName --resource-group $rgName --location $locationName --address-prefixes $vnetAddressPrefix --subnet-name $subnet1Name --subnet-prefixes $subnet1Prefix
+
+# Add Private Link Service Subnet
+az network vnet subnet create --name $subnet2Name --vnet-name $vnetName --resource-group $rgName --address-prefixes $subnet2Prefix
+az network vnet subnet update --name $subnet2Name --resource-group $rgName --vnet-name $vnetName --disable-private-link-service-network-policies true 
+
+# Create Network Security Group and associate to subnet
+az network nsg create --resource-group $rgName --name $nsgName 
+az network nsg rule create --resource-group $rgName --nsg-name $nsgName --name $nsgRuleName --protocol $nsgRuleProtocol --direction $nsgRuleDirection --source-address-prefix '*' --source-port-range '*' --destination-address-prefix '*' --destination-port-range $nsgRuleDestinationPorts --access $nsgRuleAccess --priority $nsgRulePriority
+az network vnet subnet update --resource-group $rgName --vnet-name $vnetName --name $subnet1Name --network-security-group $nsgName
+
+# Internal load balancer
+az network lb create --name $lbName --resource-group $rgName --sku standard --backend-pool-name $lbBackEndPoolName --frontend-ip-name $lbFrontEndIpName --frontend-ip-zone 1 --public-ip-address "" --vnet-name $vnetName --subnet $subnet1Name
+    # Set IP to static
+    lbPrivateIp=$(az network lb show --name $lbName --resource-group $rgName --query frontendIpConfigurations[0].privateIpAddress -o tsv)
+    az network lb frontend-ip update --lb-name $lbName --name $lbFrontEndIpName --resource-group $rgName --private-ip-address $lbPrivateIp
+    # Create health probe
+    az network lb probe create --lb-name $lbName --resource-group $rgName --name $lbHealthProbeName --protocol $lbHealthProbeProtocol --port $lbHealthProbePort   
+    # Create load balancer rule
+    az network lb rule create --lb-name $lbName --resource-group $rgName --name $lbRuleName --protocol $lbRuleProtocol --frontend-port $lbRuleFrontEndPort --backend-port $lbRuleBackEndPort --frontend-ip-name $lbFrontEndIpName --backend-pool-name $lbBackEndPoolName --probe-name $lbHealthProbeName 
+
+# Create VM Public IP and NIC
+az network public-ip create --name $vmPublicIPName --resource-group $rgName --sku standard --zone 1
+az network nic create --name $vmNicName --resource-group $rgName --vnet-name $vnetName --subnet $subnet1Name --public-ip-address $vmPublicIPName --lb-name $lbName --lb-address-pools $lbBackEndPoolName
+
+# Build Ubuntu VM
+az vm create --name $vmName --resource-group $rgName --image UbuntuLTS --size $vmSize --nics $vmNicName --generate-ssh-keys --zone 1
+vmPublicIp=$(az vm show -d --name $vmName --resource-group $rgName --query publicIps -o tsv)
+
+# prepare node.js and nginx oss
+ssh $vmPublicIp
+exit
+ssh $vmPublicIp "sudo apt-get update;sudo apt-get install nodejs \-y;sudo apt-get install npm \-y;sudo npm install express;sudo npm install body-parser"
+ssh $vmPublicIp "sudo apt-get install nginx \-y"
+ssh $vmPublicIp "sudo apt install curl gnupg2 ca-certificates lsb-release \-y"
+ssh $vmPublicIp "echo 'deb http://nginx.org/packages/ubuntu `lsb_release -cs` nginx' | sudo tee /etc/apt/sources.list.d/nginx.list"
+ssh $vmPublicIp "curl -fsSL https://nginx.org/keys/nginx_signing.key | sudo apt-key add -"
+ssh $vmPublicIp "sudo apt-key fingerprint ABF5BD827BD9BF62"
+ssh $vmPublicIp "sudo apt-get update"
+ssh $vmPublicIp "sudo wget http://archive.ubuntu.com/ubuntu/pool/main/r/readline6/libreadline6_6.3-8ubuntu2_amd64.deb"
+ssh $vmPublicIp "sudo dpkg -i libreadline6_6.3-8ubuntu2_amd64.deb"
+ssh $vmPublicIp "sudo apt-get install nginx-module-njs \-y"
+
+# Updated prepare web-server and nginx
+scp private-link/nginx.conf $vmPublicIp:
+scp private-link/*.js $vmPublicIp:
+ssh $vmPublicIp "sudo mv nginx.conf /etc/nginx/"
+ssh $vmPublicIp "sudo mv azure-privatelink.js /etc/nginx/"
+ssh $vmPublicIp "sudo nginx -s reload;sudo service nginx stop;sudo service nginx start"
+
+ssh $vmPublicIp "sudo tail /var/log/nginx/access.log"
+ssh $vmPublicIp "sudo tail /var/log/nginx/error.log"
+
+ssh $vmPublicIp
+sudo nginx -t 
+sudo node web-server.js
+
+
+
+# Create Private Link Service
+az network private-link-service create --resource-group $rgName --name $plsName --vnet-name $vnetName --subnet $subnet2Name --lb-name $lbName --lb-frontend-ip-configs $lbFrontEndIpName --location $locationName
+az network private-link-service update --resource-group $rgName --name $plsName --visibility $customerSubcriptionIds --auto-approval $customerSubcriptionIds
+plsId=$(az network private-link-service show --resource-group $rgName --name $plsName --query id -o tsv)
+echo "Provide the following Id to customer: "$plsId
+
+# Enable/Disable TCP Proxy v2 on Private Link Service
+    # Enable TCP Proxy v2    
+    az network private-link-service update --resource-group $rgName --name $plsName --enable-proxy-protocol true
+    # Disable TCP Proxy v2
+    az network private-link-service update --resource-group $rgName --name $plsName --enable-proxy-protocol false
+    # Show TCP Proxy v2 Status
+    az network private-link-service show --resource-group $rgName --name $plsName --query enableProxyProtocol
+
+# deallocate and start vm
+az vm deallocate --name $vmName --resource-group $rgName
+az vm start --name $vmName --resource-group $rgName
