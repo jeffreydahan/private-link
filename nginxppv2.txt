@@ -1,12 +1,26 @@
-Azure Private Link provides private connectivity from a virtual network to Azure platform as a service (PaaS), customer-owned, or Microsoft partner services. It simplifies the network architecture and secures the connection between endpoints in Azure by eliminating data exposure to the public internet.  In order to deal with different networking issues to make a solution like this possible, Azure leverages proxy protocol v2, leveraging the protocol to create a custom Azure specific PPv2 header.  This is a very powerful solution that allows SaaS providers to offer a more secure communication method for their customers, as the data never leaves the internal private Azure network. 
+Azure Private Link provides private connectivity from a virtual network 
+to Azure platform as a service (PaaS), customer-owned, or Microsoft partner services. 
+It simplifies the network architecture and secures the connection between endpoints in 
+Azure by eliminating data exposure to the public internet.  In order to deal with 
+different networking issues to make a solution like this possible, Azure leverages 
+proxy protocol v2, leveraging the protocol to create a custom Azure specific PPv2 header.  
+
+This is a very powerful solution that allows SaaS providers to offer a more secure 
+communication method for their customers, as the data never leaves the internal private 
+Azure network. 
+
+NGINX Plus provides a flexible PPv2 aware intelligent layer 7 load balancer, that 
+is able to decode the Azure specific PPv2 header.  This empowers our customers to be 
+able to make more intelligent routing decisions that take this information into account.
+It also allows customers to convert the PPv2 headers into standard HTTP headers to send 
+to their applications, so they can take advantage of this extra information, without 
+having to build PPv2 functionality into the application itself.   
 
  
 
-NGINX Plus provides a flexible PPv2 aware intelligent layer 7 load balancer, that is able to decode the Azure specific PPv2 header.  This empowers our customers to be able to make more intelligent routing decisions that take this information into account.  It also allows customers to convert the PPv2 headers into standard HTTP headers to send to their applications, so they can take advantage of this extra information, without having to build PPv2 functionality into the application itself.   
-
- 
-
-Due to the way that the Azure PPv2 header is encoded, it does require a small customization using javascript, leveraging the NGINX Javascript module.  As you can see in the example configuration below, this is a very simple and flexible process. 
+Due to the way that the Azure PPv2 header is encoded, it does require a small customization 
+using javascript, leveraging the NGINX Javascript module.  As you can see in the example
+configuration below, this is a very simple and flexible process. 
 
  
 
@@ -44,7 +58,10 @@ function convertTLVstring(r) {
 
  
 
-This simple configuration example is decoding the Azure PPv2 header, then adding it as the HTTP response header ‘AZURE-LINK-ID', but once the variable ‘$custom_tlv_value’ is set in the NGINX runtime, it can be leveraged just like any other variable.  Below is another example of using this variable to make routing decisions: 
+This simple configuration example is decoding the Azure PPv2 header, then adding it as the HTTP 
+response header ‘AZURE-LINK-ID', but once the variable ‘$custom_tlv_value’ is set in the NGINX 
+runtime, it can be leveraged just like any other variable.  Below is another example of using
+this variable to make routing decisions: 
 
  
 
@@ -114,7 +131,10 @@ server {
 
  
 
-This example routes requests to different upstreams based on the link id passed by the Azure PPv2 header, as well as adding the link id as a standard HTTP header being sent to the upstream host.  This does assume that you know the link id for each different customer and have dedicated application servers for each. 
+This example routes requests to different upstreams based on the link id passed by the
+Azure PPv2 header, as well as adding the link id as a standard HTTP header being sent to
+the upstream host.  This does assume that you know the link id for each different customer
+and have dedicated application servers for each. 
 
  
 
